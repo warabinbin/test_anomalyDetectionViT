@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>シンプルWebストレージマネージャー</title>
+  <style>
+    body {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #f5f5f5;
+      color: #333;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      padding: 20px;
+    }
+    h1 {
+      color: #2c3e50;
+      text-align: center;
+      margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid #eee;
+    }
+    .stats {
+      background-color: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .stat-box {
+      text-align: center;
+      padding: 10px;
+    }
+    .stat-value {
+      font-size: 24px;
+      font-weight: bold;
+      color: #3498db;
+    }
+    .stat-label {
+      font-size: 14px;
+      color: #7f8c8d;
+    }
+    .upload-container {
+      margin-bottom: 20px;
+      padding: 15px;
+      border: 2px dashed #ddd;
+      border-radius: 6px;
+      text-align: center;
+    }
+    #file-input {
+      display: none;
+    }
+    .upload-btn {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.3s;
+    }
+    .upload-btn:hover {
+      background-color: #2980b9;
+    }
+    .search-box {
+      margin-bottom: 20px;
+      display: flex;
+    }
+    #search-input {
+      flex-grow: 1;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px 0 0 4px;
+      font-size: 16px;
+    }
+    .search-btn {
+      background-color: #2ecc71;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 0 4px 4px 0;
+      cursor: pointer;
+    }
+    .file-list {
+      border: 1px solid #eee;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .file-header {
+      background-color: #f8f9fa;
+      padding: 12px 15px;
+      display: flex;
+      font-weight: bold;
+      border-bottom: 1px solid #eee;
+    }
+    .file-row {
+      display: flex;
+      padding: 12px 15px;
+      border-bottom: 1px solid #eee;
+      align-items: center;
+      transition: background-color 0.2s;
+    }
+    .file-row:hover {
+      background-color: #f5f5f5;
+    }
+    .file-row:last-child {
+      border-bottom: none;
+    }
+    .file-name {
+      flex: 3;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .file-size {
+      flex: 1;
+      text-align: center;
+    }
+    .file-date {
+      flex: 2;
+      text-align: center;
+    }
+    .file-actions {
+      flex: 1;
+      text-align: right;
+    }
+    .action-btn {
+      background-color: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 5px;
+      margin-left: 5px;
+      border-radius: 3px;
+      transition: background-color 0.2s;
+    }
+    .download-btn {
+      color: #3498db;
+    }
+    .download-btn:hover {
+      background-color: #eaf2fa;
+    }
+    .delete-btn {
+      color: #e74c3c;
+    }
+    .delete-btn:hover {
+      background-color: #fdedec;
+    }
+    .empty-message {
+      text-align: center;
+      padding: 30px;
+      color: #7f8c8d;
+      font-style: italic;
+    }
+    .drag-over {
+      background-color: #eaf2fa;
+      border-color: #3498db;
+    }
+    /* レスポンシブデザイン */
+    @media (max-width: 768px) {
+      .file-date {
+        display: none;
+      }
+      .file-name {
+        flex: 2;
+      }
+    }
+    @media (max-width: 480px) {
+      .container {
+        padding: 15px 10px;
+      }
+      .file-size {
+        display: none;
+      }
+      .file-name {
+        flex: 3;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Webストレージマネージャー</h1>
+    
+    <div class="stats">
+      <div class="stat-box">
+        <div class="stat-value" id="total-files">0</div>
+        <div class="stat-label">ファイル総数</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="total-size">0 KB</div>
+        <div class="stat-label">合計サイズ</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="storage-used">0%</div>
+        <div class="stat-label">使用容量</div>
+      </div>
+    </div>
+    
+    <div class="upload-container" id="drop-area">
+      <p>ファイルをドラッグ＆ドロップ、または</p>
+      <input type="file" id="file-input" multiple>
+      <label for="file-input" class="upload-btn">ファイルを選択</label>
+    </div>
+    
+    <div class="search-box">
+      <input type="text" id="search-input" placeholder="ファイル名で検索...">
+      <button class="search-btn" id="search-btn">検索</button>
+    </div>
+    
+    <div class="file-list">
+      <div class="file-header">
+        <div class="file-name">ファイル名</div>
+        <div class="file-size">サイズ</div>
+        <div class="file-date">アップロード日時</div>
+        <div class="file-actions">操作</div>
+      </div>
+      <div id="file-container">
+        <div class="empty-message">ファイルがありません</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // ローカルストレージからファイルメタデータを取得する関数
+      const getStoredFiles = () => {
+        const filesJson = localStorage.getItem('webStorageFiles');
+        return filesJson ? JSON.parse(filesJson) : [];
+      };
+
+      // ローカルストレージにファイルメタデータを保存する関数
+      const saveFilesToStorage = (files) => {
+        localStorage.setItem('webStorageFiles', JSON.stringify(files));
+      };
+
+      // インデックスドDBの初期化
+      let db;
+      const dbName = 'webStorageDB';
+      const dbVersion = 1;
+      const storeName = 'files';
+
+      const initDB = () => {
+        return new Promise((resolve, reject) => {
+          const request = indexedDB.open(dbName, dbVersion);
+          
+          request.onerror = (event) => {
+            console.error('IndexedDB error:', event.target.error);
+            reject(event.target.error);
+          };
+          
+          request.onsuccess = (event) => {
+            db = event.target.result;
+            console.log('IndexedDB connected');
+            resolve(db);
+          };
+          
+          request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(storeName)) {
+              const objectStore = db.createObjectStore(storeName, { keyPath: 'id' });
+              objectStore.createIndex('name', 'name', { unique: false });
+              objectStore.createIndex('timestamp', 'timestamp', { unique: false });
+            }
+          };
+        });
+      };
+
+      // ファイルをインデックスドDBに保存する関数
+      const saveFileToIndexedDB = (fileObj) => {
+        return new Promise((resolve, reject) => {
+          const transaction = db.transaction([storeName], 'readwrite');
+          const store = transaction.objectStore(storeName);
+          const request = store.put(fileObj);
+          
+          request.onsuccess = () => resolve();
+          request.onerror = (event) => reject(event.target.error);
+        });
+      };
+
+      // インデックスドDBからファイルを取得する関数
+      const getFileFromIndexedDB = (id) => {
+        return new Promise((resolve, reject) => {
+          const transaction = db.transaction([storeName], 'readonly');
+          const store = transaction.objectStore(storeName);
+          const request = store.get(id);
+          
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = (event) => reject(event.target.error);
+        });
+      };
+
+      // インデックスドDBからファイルを削除する関数
+      const deleteFileFromIndexedDB = (id) => {
+        return new Promise((resolve, reject) => {
+          const transaction = db.transaction([storeName], 'readwrite');
+          const store = transaction.objectStore(storeName);
+          const request = store.delete(id);
+          
+          request.onsuccess = () => resolve();
+          request.onerror = (event) => reject(event.target.error);
+        });
+      };
+
+      // サイズをフォーマットする関数
+      const formatSize = (bytes) => {
+        if (bytes === 0) return '0 Bytes';
+        
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
+      };
+
+      // ファイルリストを表示する関数
+      const displayFiles = (files) => {
+        const container = document.getElementById('file-container');
+        container.innerHTML = '';
+        
+        if (files.length === 0) {
+          container.innerHTML = '<div class="empty-message">ファイルがありません</div>';
+          return;
+        }
+        
+        files.forEach(file => {
+          const row = document.createElement('div');
+          row.className = 'file-row';
+          
+          row.innerHTML = `
+            <div class="file-name" title="${file.name}">${file.name}</div>
+            <div class="file-size">${formatSize(file.size)}</div>
+            <div class="file-date">${new Date(file.timestamp).toLocaleString()}</div>
+            <div class="file-actions">
+              <button class="action-btn download-btn" data-id="${file.id}" title="ダウンロード">↓</button>
+              <button class="action-btn delete-btn" data-id="${file.id}" title="削除">×</button>
+            </div>
+          `;
+          
+          container.appendChild(row);
+        });
+        
+        // ダウンロードボタンのイベントリスナーを追加
+        document.querySelectorAll('.download-btn').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            const fileId = e.target.getAttribute('data-id');
+            const fileObj = await getFileFromIndexedDB(fileId);
+            
+            if (fileObj && fileObj.data) {
+              const blob = new Blob([fileObj.data]);
+              const url = URL.createObjectURL(blob);
+              
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = fileObj.name;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            }
+          });
+        });
+        
+        // 削除ボタンのイベントリスナーを追加
+        document.querySelectorAll('.delete-btn').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            if (confirm('このファイルを削除してもよろしいですか？')) {
+              const fileId = e.target.getAttribute('data-id');
+              
+              try {
+                // インデックスドDBからファイルを削除
+                await deleteFileFromIndexedDB(fileId);
+                
+                // メタデータからファイルを削除
+                const files = getStoredFiles();
+                const updatedFiles = files.filter(file => file.id !== fileId);
+                saveFilesToStorage(updatedFiles);
+                
+                // ファイルリストを更新
+                displayFiles(updatedFiles);
+                updateStats();
+                
+                alert('ファイルが削除されました');
+              } catch (error) {
+                console.error('削除エラー:', error);
+                alert('ファイルの削除中にエラーが発生しました');
+              }
+            }
+          });
+        });
+      };
+
+      // 統計情報を更新する関数
+      const updateStats = () => {
+        const files = getStoredFiles();
+        const totalFiles = files.length;
+        
+        const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+        
+        // ローカルストレージの合計容量は約5MBとして計算
+        const storageLimit = 5 * 1024 * 1024;
+        const storageUsedPercent = Math.min(Math.round((totalSize / storageLimit) * 100), 100);
+        
+        document.getElementById('total-files').textContent = totalFiles;
+        document.getElementById('total-size').textContent = formatSize(totalSize);
+        document.getElementById('storage-used').textContent = storageUsedPercent + '%';
+      };
+
+      // ファイルをアップロードする関数
+      const uploadFiles = async (files) => {
+        const storedFiles = getStoredFiles();
+        
+        for (const file of files) {
+          try {
+            // ファイルを読み込む
+            const fileData = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = (e) => resolve(e.target.result);
+              reader.onerror = (e) => reject(e.target.error);
+              reader.readAsArrayBuffer(file);
+            });
+            
+            // ファイルのメタデータ
+            const fileObj = {
+              id: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+              name: file.name,
+              size: file.size,
+              type: file.type,
+              timestamp: Date.now(),
+              data: fileData
+            };
+            
+            // インデックスドDBにファイルを保存
+            await saveFileToIndexedDB(fileObj);
+            
+            // メタデータを保存（データ本体を除く）
+            const metaObj = { ...fileObj };
+            delete metaObj.data;
+            storedFiles.push(metaObj);
+          } catch (error) {
+            console.error('アップロードエラー:', error);
+            alert(`"${file.name}" のアップロード中にエラーが発生しました`);
+          }
+        }
+        
+        saveFilesToStorage(storedFiles);
+        displayFiles(storedFiles);
+        updateStats();
+      };
+
+      // 検索機能
+      const searchFiles = (query) => {
+        query = query.toLowerCase();
+        const files = getStoredFiles();
+        
+        if (!query) {
+          displayFiles(files);
+          return;
+        }
+        
+        const filteredFiles = files.filter(file => 
+          file.name.toLowerCase().includes(query)
+        );
+        
+        displayFiles(filteredFiles);
+      };
+
+      // イベントリスナーの設定
+      const setupEventListeners = () => {
+        // ファイル入力のイベントリスナー
+        document.getElementById('file-input').addEventListener('change', (e) => {
+          if (e.target.files.length > 0) {
+            uploadFiles(e.target.files);
+          }
+        });
+        
+        // 検索ボタンのイベントリスナー
+        document.getElementById('search-btn').addEventListener('click', () => {
+          const query = document.getElementById('search-input').value;
+          searchFiles(query);
+        });
+        
+        // 検索入力フィールドのイベントリスナー
+        document.getElementById('search-input').addEventListener('keyup', (e) => {
+          if (e.key === 'Enter') {
+            const query = e.target.value;
+            searchFiles(query);
+          }
+        });
+        
+        // ドラッグ＆ドロップのイベントリスナー
+        const dropArea = document.getElementById('drop-area');
+        
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+          dropArea.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }, false);
+        });
+        
+        ['dragenter', 'dragover'].forEach(eventName => {
+          dropArea.addEventListener(eventName, () => {
+            dropArea.classList.add('drag-over');
+          }, false);
+        });
+        
+        ['dragleave', 'drop'].forEach(eventName => {
+          dropArea.addEventListener(eventName, () => {
+            dropArea.classList.remove('drag-over');
+          }, false);
+        });
+        
+        dropArea.addEventListener('drop', (e) => {
+          const files = e.dataTransfer.files;
+          if (files.length > 0) {
+            uploadFiles(files);
+          }
+        }, false);
+      };
+
+      // アプリケーションの初期化
+      const initApp = async () => {
+        try {
+          await initDB();
+          const files = getStoredFiles();
+          displayFiles(files);
+          updateStats();
+          setupEventListeners();
+        } catch (error) {
+          console.error('初期化エラー:', error);
+          alert('アプリケーションの初期化中にエラーが発生しました');
+        }
+      };
+
+      initApp();
+    });
+  </script>
+</body>
+</html>
