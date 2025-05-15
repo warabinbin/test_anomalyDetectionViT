@@ -172,3 +172,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# datasetの中の特定フォルダを無視
+dataset/test/
+dataset/train/
+
+# ログファイルを無視
+webui_data_generator.log

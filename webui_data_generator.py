@@ -1,0 +1,564 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+webui_data_generator.py
+
+このスクリプトはSeleniumを使用してWebGUIの正常バージョンと異常バージョンからスクリーンショットを
+自動的に取得し、ViTモデルのための異常検知データセットを構築します。
+"""
+
+import os
+import time
+import random
+import shutil
+import logging
+import argparse
+from pathlib import Path
+from datetime import datetime
+from io import BytesIO
+from typing import Dict, List, Tuple, Union, Optional
+
+import numpy as np
+from PIL import Image
+from tqdm import tqdm
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import (
+    TimeoutException, 
+    NoSuchElementException, 
+    ElementNotInteractableException,
+    StaleElementReferenceException
+)
+from webdriver_manager.chrome import ChromeDriverManager
+
+# ロギング設定
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("webui_data_generator.log", encoding="utf-8")
+    ]
+)
+logger = logging.getLogger("WebUIDataGenerator")
+
+# 定数
+DEFAULT_NORMAL_HTML = "testapp/simple-storage-manager.html"
+DEFAULT_ABNORMAL_HTML = "testapp/error-simple-storage-manager.html"
+DEFAULT_DATASET_DIR = "dataset"
+DEFAULT_TRAIN_RATIO = 0.8
+DEFAULT_IMG_SIZE = (224, 224)  # ViTのデフォルトサイズ
+DEFAULT_NUM_SAMPLES = 100
+WAIT_TIMEOUT = 10
+INTERACTION_PAUSE = 0.5  # アクション間の待機時間
+UI_TEXT_EXAMPLES = [
+    "買い物リスト",
+    "ToDo: 週末のタスク",
+    "会議の議事録",
+    "プロジェクト計画",
+    "読書メモ",
+    "料理レシピ",
+    "旅行計画",
+    "学習ノート",
+    "アイデアメモ",
+    "連絡先リスト"
+]
+SAMPLE_TEXTS = [
+    "これはテストメモです。保存して表示できるか確認します。",
+    "プロジェクトのタスク:\n1. 要件分析\n2. 設計\n3. 実装\n4. テスト",
+    "会議のアジェンダ:\n- 前回の議事録確認\n- 進捗状況の共有\n- 課題の討議",
+    "買い物リスト:\n・牛乳\n・卵\n・パン\n・りんご\n・バナナ",
+    "今日の目標:\n1. メールチェック\n2. レポート作成\n3. 資料の準備\n4. 会議出席",
+    "メモ: 明日の会議は9時からオンラインで開催されます。資料を事前に確認しておくこと。",
+    "読書メモ:\nタイトル: データサイエンス入門\n著者: 山田太郎\n重要ポイント: 第3章のアルゴリズム解説が特に参考になる。",
+    "旅行計画:\n・出発: 6月10日\n・帰宅: 6月15日\n・宿泊: グランドホテル\n・持ち物: パスポート、カメラ、充電器",
+    "学習計画:\n1. 基礎理論の復習\n2. 問題演習\n3. モデル構築\n4. パラメータ調整\n5. 性能評価",
+    "ランダムなメモテキストです。アプリケーションのテストに使用します。様々な操作を行います。"
+]
+
+class WebUIDataGenerator:
+    """
+    WebGUIの異常検知データセット生成クラス
+    
+    正常と異常なUI状態からスクリーンショットを取得し、
+    ViTモデルで使用するためのデータセットを生成します。
+    """
+    
+    def __init__(
+        self,
+        normal_html: str,
+        abnormal_html: str,
+        dataset_dir: str,
+        img_size: Tuple[int, int] = DEFAULT_IMG_SIZE,
+        train_ratio: float = DEFAULT_TRAIN_RATIO,
+        num_samples: int = DEFAULT_NUM_SAMPLES
+    ):
+        """
+        初期化メソッド
+        
+        Args:
+            normal_html: 正常なUIのHTMLファイルパス
+            abnormal_html: 異常なUIのHTMLファイルパス
+            dataset_dir: データセットを保存するディレクトリパス
+            img_size: 生成する画像サイズ (幅, 高さ)
+            train_ratio: 訓練データの割合 (0.0〜1.0)
+            num_samples: 生成するサンプル数
+        """
+        self.normal_html = os.path.abspath(normal_html)
+        self.abnormal_html = os.path.abspath(abnormal_html)
+        self.dataset_dir = dataset_dir
+        self.img_size = img_size
+        self.train_ratio = train_ratio
+        self.num_samples = num_samples
+        
+        # HTMLファイルが存在するか確認
+        if not os.path.exists(self.normal_html):
+            raise FileNotFoundError(f"正常HTMLファイルが見つかりません: {self.normal_html}")
+        if not os.path.exists(self.abnormal_html):
+            raise FileNotFoundError(f"異常HTMLファイルが見つかりません: {self.abnormal_html}")
+            
+        logger.info(f"正常HTMLファイル: {self.normal_html}")
+        logger.info(f"異常HTMLファイル: {self.abnormal_html}")
+        
+        # データセットディレクトリ構造
+        self.train_dir = os.path.join(dataset_dir, "train")
+        self.test_dir = os.path.join(dataset_dir, "test")
+        self.train_normal_dir = os.path.join(self.train_dir, "normal")
+        self.test_normal_dir = os.path.join(self.test_dir, "normal")
+        self.test_abnormal_dir = os.path.join(self.test_dir, "abnormal")
+        
+        # Webドライバー設定
+        chrome_options = Options()
+        # chrome_options.add_argument("--headless")  # ヘッドレスモードで実行する場合はコメントアウト
+        chrome_options.add_argument("--window-size=1366,768")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--lang=ja")  # 日本語設定を追加
+        self.driver = webdriver.Chrome(
+            service=Service(ChromeDriverManager().install()),
+            options=chrome_options
+        )
+        
+    def setup_directories(self):
+        """データセットのディレクトリ構造をセットアップ"""
+        logger.info("データセットディレクトリを設定しています...")
+        os.makedirs(self.train_normal_dir, exist_ok=True)
+        os.makedirs(self.test_normal_dir, exist_ok=True)
+        os.makedirs(self.test_abnormal_dir, exist_ok=True)
+    
+    def clean_directories(self):
+        """データセットディレクトリをクリーンアップ"""
+        logger.info("データセットディレクトリをクリーンアップしています...")
+        if os.path.exists(self.dataset_dir):
+            shutil.rmtree(self.dataset_dir)
+        self.setup_directories()
+    
+    def load_page(self, html_path: str) -> bool:
+        """
+        HTMLページをロード
+        
+        Args:
+            html_path: HTMLファイルのパス
+            
+        Returns:
+            bool: ロードに成功した場合はTrue
+        """
+        try:
+            # 絶対パスに変換して確実にfileプロトコルで開く
+            abs_path = os.path.abspath(html_path)
+            file_url = f"file:///{abs_path.replace(os.sep, '/')}"
+            logger.info(f"ページをロードしています: {file_url}")
+            self.driver.get(file_url)
+            
+            # ページが読み込まれるまで待機
+            WebDriverWait(self.driver, WAIT_TIMEOUT).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            logger.info("ページのロードに成功しました")
+            return True
+        except TimeoutException:
+            logger.error(f"ページのロードがタイムアウトしました: {html_path}")
+            return False
+        except Exception as e:
+            logger.error(f"ページのロード中にエラーが発生しました: {str(e)}")
+            return False
+    
+    def take_screenshot(self, output_path: str):
+        """
+        スクリーンショットを撮影して保存
+        
+        Args:
+            output_path: 保存先のパス
+        """
+        try:
+            # スクリーンショットを撮影
+            screenshot = self.driver.get_screenshot_as_png()
+            image = Image.open(BytesIO(screenshot))
+            
+            # ViTの入力サイズに合わせてリサイズ
+            image = image.resize(self.img_size, Image.LANCZOS)
+            
+            # 保存先ディレクトリを確認
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # 保存
+            image.save(output_path)
+            logger.debug(f"スクリーンショットを保存しました: {output_path}")
+        except Exception as e:
+            logger.error(f"スクリーンショットの撮影中にエラーが発生しました: {str(e)}")
+    
+    def perform_random_interaction(self) -> str:
+        """
+        UIでランダムなインタラクションを実行
+        
+        Returns:
+            str: 実行したアクションの説明
+        """
+        try:
+            # 実行可能なアクションのリスト
+            actions = [
+                self.input_text_to_title,
+                self.input_text_to_content,
+                self.click_save_button,
+                self.search_text,
+                self.view_text,
+                self.delete_text,
+                self.close_modal,
+                self.scroll_page
+            ]
+            
+            # ランダムにアクションを選択して実行
+            action = random.choice(actions)
+            result = action()
+            time.sleep(INTERACTION_PAUSE)  # アクション後の短い待機
+            return result
+        except Exception as e:
+            logger.warning(f"インタラクション中にエラーが発生しました: {str(e)}")
+            return "インタラクションに失敗"
+    
+    def input_text_to_title(self) -> str:
+        """タイトル入力フィールドにテキストを入力"""
+        try:
+            title_input = self.driver.find_element(By.ID, "text-title")
+            title_input.clear()
+            title = random.choice(UI_TEXT_EXAMPLES)
+            title_input.send_keys(title)
+            return f"タイトルを入力: {title}"
+        except NoSuchElementException:
+            return "タイトル入力フィールドが見つかりません"
+        except ElementNotInteractableException:
+            return "タイトル入力フィールドが操作できません"
+    
+    def input_text_to_content(self) -> str:
+        """コンテンツ入力フィールドにテキストを入力"""
+        try:
+            content_input = self.driver.find_element(By.ID, "text-input")
+            content_input.clear()
+            content = random.choice(SAMPLE_TEXTS)
+            content_input.send_keys(content)
+            return "コンテンツを入力"
+        except NoSuchElementException:
+            return "コンテンツ入力フィールドが見つかりません"
+        except ElementNotInteractableException:
+            return "コンテンツ入力フィールドが操作できません"
+    
+    def click_save_button(self) -> str:
+        """保存ボタンをクリック"""
+        try:
+            save_btn = self.driver.find_element(By.ID, "save-btn")
+            save_btn.click()
+            # アラートが表示された場合は対応
+            try:
+                alert = WebDriverWait(self.driver, 3).until(EC.alert_is_present())
+                alert.accept()
+                return "保存ボタンをクリック (アラート表示)"
+            except TimeoutException:
+                return "保存ボタンをクリック"
+        except NoSuchElementException:
+            return "保存ボタンが見つかりません"
+        except ElementNotInteractableException:
+            return "保存ボタンが操作できません"
+    
+    def search_text(self) -> str:
+        """テキストを検索"""
+        try:
+            search_input = self.driver.find_element(By.ID, "search-input")
+            search_input.clear()
+            search_term = random.choice([
+                "", 
+                "リスト", 
+                "メモ", 
+                "テスト", 
+                "プロジェクト"
+            ])
+            search_input.send_keys(search_term)
+            search_btn = self.driver.find_element(By.ID, "search-btn")
+            search_btn.click()
+            return f"テキストを検索: {search_term}"
+        except NoSuchElementException:
+            return "検索フィールドが見つかりません"
+        except ElementNotInteractableException:
+            return "検索フィールドが操作できません"
+    
+    def view_text(self) -> str:
+        """テキストを表示"""
+        try:
+            view_btns = self.driver.find_elements(By.CLASS_NAME, "view-btn")
+            if view_btns:
+                view_btn = random.choice(view_btns)
+                view_btn.click()
+                return "テキストを表示"
+            return "表示可能なテキストがありません"
+        except NoSuchElementException:
+            return "表示ボタンが見つかりません"
+        except ElementNotInteractableException:
+            return "表示ボタンが操作できません"
+    
+    def delete_text(self) -> str:
+        """テキストを削除"""
+        try:
+            delete_btns = self.driver.find_elements(By.CLASS_NAME, "delete-btn")
+            if delete_btns:
+                delete_btn = random.choice(delete_btns)
+                delete_btn.click()
+                # 確認ダイアログに対応
+                try:
+                    alert = WebDriverWait(self.driver, 3).until(EC.alert_is_present())
+                    alert.accept()
+                    return "テキストを削除 (確認済み)"
+                except TimeoutException:
+                    return "テキストを削除"
+            return "削除可能なテキストがありません"
+        except NoSuchElementException:
+            return "削除ボタンが見つかりません"
+        except ElementNotInteractableException:
+            return "削除ボタンが操作できません"
+    
+    def close_modal(self) -> str:
+        """モーダルを閉じる"""
+        try:
+            # モーダルが表示されているか確認
+            modal = self.driver.find_element(By.ID, "view-modal")
+            if modal.is_displayed():
+                close_btn = self.driver.find_element(By.CLASS_NAME, "close-modal")
+                close_btn.click()
+                return "モーダルを閉じました"
+            return "表示されているモーダルがありません"
+        except NoSuchElementException:
+            return "モーダルまたは閉じるボタンが見つかりません"
+        except ElementNotInteractableException:
+            return "モーダルまたは閉じるボタンが操作できません"
+    
+    def scroll_page(self) -> str:
+        """ページをスクロール"""
+        try:
+            body = self.driver.find_element(By.TAG_NAME, "body")
+            scroll_amount = random.randint(-300, 300)
+            self.driver.execute_script(f"window.scrollBy(0, {scroll_amount})")
+            return f"ページをスクロール: {scroll_amount}px"
+        except Exception as e:
+            return f"スクロール中にエラー: {str(e)}"
+    
+    def generate_dataset(self):
+        """データセットを生成"""
+        # ディレクトリを準備
+        self.clean_directories()
+        
+        try:
+            # 正常UIからのトレーニングデータとテストデータを生成
+            logger.info("正常UIからデータセットを生成しています...")
+            self._generate_normal_samples()
+            
+            # 異常UIからのテストデータを生成
+            logger.info("異常UIからデータセットを生成しています...")
+            self._generate_abnormal_samples()
+            
+            logger.info(f"データセット生成が完了しました: {self.dataset_dir}")
+        except Exception as e:
+            logger.error(f"データセット生成中にエラーが発生しました: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+        finally:
+            # ブラウザを閉じる
+            self.driver.quit()
+    
+    def _generate_normal_samples(self):
+        """正常UIからのサンプルを生成"""
+        if not self.load_page(self.normal_html):
+            logger.error("正常UIのロードに失敗しました。")
+            return
+        
+        num_train = int(self.num_samples * self.train_ratio)
+        num_test = self.num_samples - num_train
+        
+        # 訓練サンプルを生成
+        logger.info(f"正常UI: 訓練サンプルを {num_train} 個生成しています...")
+        for i in tqdm(range(num_train)):
+            # ランダムなUIインタラクションを実行
+            for _ in range(random.randint(1, 5)):
+                self.perform_random_interaction()
+            
+            # スクリーンショットを撮影
+            filename = f"normal_train_{i:04d}.png"
+            output_path = os.path.join(self.train_normal_dir, filename)
+            self.take_screenshot(output_path)
+        
+        # テストサンプルを生成
+        logger.info(f"正常UI: テストサンプルを {num_test} 個生成しています...")
+        for i in tqdm(range(num_test)):
+            # ランダムなUIインタラクションを実行
+            for _ in range(random.randint(1, 5)):
+                self.perform_random_interaction()
+            
+            # スクリーンショットを撮影
+            filename = f"normal_test_{i:04d}.png"
+            output_path = os.path.join(self.test_normal_dir, filename)
+            self.take_screenshot(output_path)
+    
+    def _generate_abnormal_samples(self):
+        """異常UIからのサンプルを生成"""
+        if not self.load_page(self.abnormal_html):
+            logger.error("異常UIのロードに失敗しました。")
+            return
+        
+        # テスト用の異常サンプルを生成
+        logger.info(f"異常UI: テストサンプルを {self.num_samples} 個生成しています...")
+        for i in tqdm(range(self.num_samples)):
+            # ランダムなUIインタラクションを実行
+            for _ in range(random.randint(1, 5)):
+                self.perform_random_interaction()
+            
+            # スクリーンショットを撮影
+            filename = f"abnormal_test_{i:04d}.png"
+            output_path = os.path.join(self.test_abnormal_dir, filename)
+            self.take_screenshot(output_path)
+
+def parse_arguments():
+    """コマンドライン引数をパース"""
+    parser = argparse.ArgumentParser(
+        description="WebGUIの異常検知データセットを生成するツール"
+    )
+    parser.add_argument(
+        "--normal", 
+        type=str, 
+        default=DEFAULT_NORMAL_HTML,
+        help=f"正常なUIのHTMLファイル (デフォルト: {DEFAULT_NORMAL_HTML})"
+    )
+    parser.add_argument(
+        "--abnormal", 
+        type=str, 
+        default=DEFAULT_ABNORMAL_HTML,
+        help=f"異常なUIのHTMLファイル (デフォルト: {DEFAULT_ABNORMAL_HTML})"
+    )
+    parser.add_argument(
+        "--output", 
+        type=str, 
+        default=DEFAULT_DATASET_DIR,
+        help=f"データセット出力ディレクトリ (デフォルト: {DEFAULT_DATASET_DIR})"
+    )
+    parser.add_argument(
+        "--samples", 
+        type=int, 
+        default=DEFAULT_NUM_SAMPLES,
+        help=f"生成するサンプル数 (デフォルト: {DEFAULT_NUM_SAMPLES})"
+    )
+    parser.add_argument(
+        "--train-ratio", 
+        type=float, 
+        default=DEFAULT_TRAIN_RATIO,
+        help=f"訓練データの割合 (0.0〜1.0) (デフォルト: {DEFAULT_TRAIN_RATIO})"
+    )
+    parser.add_argument(
+        "--img-size", 
+        type=int, 
+        nargs=2, 
+        default=DEFAULT_IMG_SIZE,
+        help=f"画像サイズ (幅 高さ) (デフォルト: {DEFAULT_IMG_SIZE[0]} {DEFAULT_IMG_SIZE[1]})"
+    )
+    parser.add_argument(
+        "--clean", 
+        action="store_true",
+        help="既存のデータセットディレクトリをクリーンアップ"
+    )
+    parser.add_argument(
+        "--list-files",
+        action="store_true",
+        help="指定されたディレクトリ内のHTMLファイルを表示"
+    )
+    parser.add_argument(
+        "--dir",
+        type=str,
+        default=".",
+        help="HTMLファイルを検索するディレクトリ (--list-filesオプションと共に使用)"
+    )
+    return parser.parse_args()
+
+def list_html_files(directory):
+    """指定されたディレクトリ内のHTMLファイルを一覧表示"""
+    html_files = []
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            if file.endswith(".html"):
+                html_files.append(os.path.join(root, file))
+    
+    if html_files:
+        print(f"\n指定されたディレクトリ({directory})内のHTMLファイル:")
+        for i, file in enumerate(html_files, 1):
+            print(f"{i}. {file}")
+    else:
+        print(f"\n指定されたディレクトリ({directory})内にHTMLファイルが見つかりませんでした。")
+
+def main():
+    """メイン関数"""
+    # コマンドライン引数を解析
+    args = parse_arguments()
+    
+    # HTMLファイルのリストを表示するオプション
+    if args.list_files:
+        list_html_files(args.dir)
+        return
+    
+    try:
+        # データジェネレーターを初期化
+        generator = WebUIDataGenerator(
+            normal_html=args.normal,
+            abnormal_html=args.abnormal,
+            dataset_dir=args.output,
+            img_size=tuple(args.img_size),
+            train_ratio=args.train_ratio,
+            num_samples=args.samples
+        )
+        
+        # データセットを生成
+        generator.generate_dataset()
+        
+        # データセット情報を表示
+        train_normal_count = len(os.listdir(generator.train_normal_dir))
+        test_normal_count = len(os.listdir(generator.test_normal_dir))
+        test_abnormal_count = len(os.listdir(generator.test_abnormal_dir))
+        
+        print("\nデータセット情報:")
+        print(f"  - 訓練データ (正常): {train_normal_count}枚")
+        print(f"  - テストデータ (正常): {test_normal_count}枚")
+        print(f"  - テストデータ (異常): {test_abnormal_count}枚")
+        print(f"  - データセット総数: {train_normal_count + test_normal_count + test_abnormal_count}枚")
+        print(f"  - 出力先: {os.path.abspath(args.output)}")
+    
+    except FileNotFoundError as e:
+        print(f"エラー: {e}")
+        print("\nHTMLファイルパスを確認するために --list-files オプションを使用してください:")
+        print("  python webui_data_generator.py --list-files --dir ディレクトリパス")
+    
+    except Exception as e:
+        print(f"エラー: {e}")
+        import traceback
+        print(traceback.format_exc())
+
+if __name__ == "__main__":
+    main()
