@@ -176,6 +176,8 @@ cython_debug/
 # datasetの中の特定フォルダを無視
 dataset/test/
 dataset/train/
+data/
 
 # ログファイルを無視
 webui_data_generator.log
+ensemble_anomaly_detection_results.png
