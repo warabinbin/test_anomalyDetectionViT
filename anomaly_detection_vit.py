@@ -239,12 +239,33 @@ def improved_anomaly_detection(train_folder='./data/train', test_folder='./data/
         train_features = pca.fit_transform(train_features)
         print(f"PCA後の特徴量の次元: {train_features.shape[1]}")
     
-    # マハラノビス距離のためのロバスト共分散推定
-    print("ロバスト共分散推定を計算しています...")
-    robust_cov = MinCovDet().fit(train_features)
+    # データが少なすぎる場合はkNNを使用、そうでない場合はロバスト共分散推定を試行
+    use_knn = len(train_features) < 200
+    
+    if use_knn:
+        print(f"データサイズが小さいため（{len(train_features)}個）、kNN法を使用します")
+        nn_model = NearestNeighbors(n_neighbors=1, metric='euclidean')
+        nn_model.fit(train_features)
+    else:
+        try:
+            # マハラノビス距離のためのロバスト共分散推定
+            print("ロバスト共分散推定を計算しています...")
+            # データポイント数に応じてサポート率を調整
+            support_fraction = min(0.6, (len(train_features) - 1) / len(train_features))
+            robust_cov = MinCovDet(support_fraction=support_fraction).fit(train_features)
+        except ValueError as e:
+            print(f"MinCovDetエラー: {e}")
+            print("代替としてkNN法を使用します")
+            use_knn = True
+            nn_model = NearestNeighbors(n_neighbors=1, metric='euclidean')
+            nn_model.fit(train_features)
     
     # 正常サンプルの距離を計算（閾値決定用）
-    normal_distances = robust_cov.mahalanobis(train_features)
+    if use_knn:
+        distances, _ = nn_model.kneighbors(train_features)
+        normal_distances = [dist[0] for dist in distances]
+    else:
+        normal_distances = robust_cov.mahalanobis(train_features)
     
     # テスト画像の読み込みと特徴抽出
     print("テスト画像を評価しています...")
@@ -267,8 +288,13 @@ def improved_anomaly_detection(train_folder='./data/train', test_folder='./data/
     if use_pca:
         test_features = pca.transform(test_features)
     
-    # マハラノビス距離の計算
-    anomaly_scores = robust_cov.mahalanobis(test_features)
+    # 距離計算
+    if use_knn:
+        distances, _ = nn_model.kneighbors(test_features)
+        anomaly_scores = [dist[0] for dist in distances]
+    else:
+        # マハラノビス距離の計算
+        anomaly_scores = robust_cov.mahalanobis(test_features)
     
     # スコアの正規化（閾値が0.00になる問題の対策）
     anomaly_scores = normalize_scores(anomaly_scores)
@@ -326,11 +352,10 @@ def ensemble_anomaly_detection(train_folder='./data/train', test_folder='./data/
     """
     複数のViTモデルをアンサンブルして精度を向上させる関数
     """
-    # 使用するモデル設定
+    # 使用するモデル設定（データが少ない場合は設定を減らす）
     model_configs = [
-        {'name': 'vit_base_patch16_224', 'use_pca': True},
-        {'name': 'vit_base_patch16_224', 'use_pca': False},
-        {'name': 'vit_small_patch16_224', 'use_pca': True}
+        {'name': 'vit_base_patch16_224', 'use_pca': True, 'method': 'knn'},
+        {'name': 'vit_base_patch16_224', 'use_pca': False, 'method': 'knn'}
     ]
     
     # テスト画像の読み込み（ファイル名の記録用）
@@ -359,8 +384,8 @@ def ensemble_anomaly_detection(train_folder='./data/train', test_folder='./data/
         batch_size = 16
         
         with torch.no_grad():
-            for i in range(0, len(train_imgs), batch_size):
-                batch = train_imgs[i:i+batch_size].to(device)
+            for j in range(0, len(train_imgs), batch_size):
+                batch = train_imgs[j:j+batch_size].to(device)
                 feat = model(batch)
                 train_features.append(feat.cpu().numpy())
         
@@ -371,14 +396,11 @@ def ensemble_anomaly_detection(train_folder='./data/train', test_folder='./data/
             pca = PCA(n_components=0.95)
             train_features = pca.fit_transform(train_features)
         
-        # マハラノビス距離計算
-        robust_cov = MinCovDet().fit(train_features)
-        
         # テスト画像の特徴抽出
         test_features = []
         with torch.no_grad():
-            for i in range(0, len(test_imgs), batch_size):
-                batch = test_imgs[i:i+batch_size].to(device)
+            for j in range(0, len(test_imgs), batch_size):
+                batch = test_imgs[j:j+batch_size].to(device)
                 feat = model(batch)
                 test_features.append(feat.cpu().numpy())
         
@@ -388,8 +410,27 @@ def ensemble_anomaly_detection(train_folder='./data/train', test_folder='./data/
         if config['use_pca']:
             test_features = pca.transform(test_features)
         
-        # マハラノビス距離の計算
-        scores = robust_cov.mahalanobis(test_features)
+        # データが少なすぎる場合はkNNを使用、それ以外はMinCovDetを試行
+        if config['method'] == 'knn' or len(train_features) < 200:
+            print(f"データサイズが小さいため（{len(train_features)}個）、kNN法を使用します")
+            nn_model = NearestNeighbors(n_neighbors=1, metric='euclidean')
+            nn_model.fit(train_features)
+            distances, _ = nn_model.kneighbors(test_features)
+            scores = [dist[0] for dist in distances]
+        else:
+            try:
+                # マハラノビス距離計算（support_fractionを調整）
+                # データポイント数に応じてサポート率を調整
+                support_fraction = min(0.6, (len(train_features) - 1) / len(train_features))
+                robust_cov = MinCovDet(support_fraction=support_fraction).fit(train_features)
+                scores = robust_cov.mahalanobis(test_features)
+            except ValueError as e:
+                print(f"MinCovDetエラー: {e}")
+                print("代替としてkNN法を使用します")
+                nn_model = NearestNeighbors(n_neighbors=1, metric='euclidean')
+                nn_model.fit(train_features)
+                distances, _ = nn_model.kneighbors(test_features)
+                scores = [dist[0] for dist in distances]
         
         # スコアの正規化
         scores = normalize_scores(scores)
