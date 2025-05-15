@@ -52,9 +52,10 @@ logger = logging.getLogger("WebUIDataGenerator")
 DEFAULT_NORMAL_HTML = "testapp/simple-storage-manager.html"
 DEFAULT_ABNORMAL_HTML = "testapp/error-simple-storage-manager.html"
 DEFAULT_DATASET_DIR = "dataset"
-DEFAULT_TRAIN_RATIO = 0.8
+DEFAULT_TRAIN_RATIO = 0.7
 DEFAULT_IMG_SIZE = (224, 224)  # ViTのデフォルトサイズ
-DEFAULT_NUM_SAMPLES = 100
+DEFAULT_NUM_SAMPLES = 500
+DEFAULT_VAL_RATIO = 0.1    # 検証データ用の比率を追加
 WAIT_TIMEOUT = 10
 INTERACTION_PAUSE = 0.5  # アクション間の待機時間
 UI_TEXT_EXAMPLES = [
@@ -128,8 +129,12 @@ class WebUIDataGenerator:
         
         # データセットディレクトリ構造
         self.train_dir = os.path.join(dataset_dir, "train")
+        self.val_dir = os.path.join(dataset_dir, "val")    # 検証用ディレクトリを追加
         self.test_dir = os.path.join(dataset_dir, "test")
         self.train_normal_dir = os.path.join(self.train_dir, "normal")
+        self.train_abnormal_dir = os.path.join(self.train_dir, "abnormal")  # 訓練用異常データ
+        self.val_normal_dir = os.path.join(self.val_dir, "normal")          # 検証用正常データ
+        self.val_abnormal_dir = os.path.join(self.val_dir, "abnormal")      # 検証用異常データ
         self.test_normal_dir = os.path.join(self.test_dir, "normal")
         self.test_abnormal_dir = os.path.join(self.test_dir, "abnormal")
         
@@ -401,7 +406,7 @@ class WebUIDataGenerator:
         logger.info(f"正常UI: 訓練サンプルを {num_train} 個生成しています...")
         for i in tqdm(range(num_train)):
             # ランダムなUIインタラクションを実行
-            for _ in range(random.randint(1, 5)):
+            for _ in range(random.randint(3, 10)):
                 self.perform_random_interaction()
             
             # スクリーンショットを撮影
@@ -413,7 +418,7 @@ class WebUIDataGenerator:
         logger.info(f"正常UI: テストサンプルを {num_test} 個生成しています...")
         for i in tqdm(range(num_test)):
             # ランダムなUIインタラクションを実行
-            for _ in range(random.randint(1, 5)):
+            for _ in range(random.randint(3, 10)):
                 self.perform_random_interaction()
             
             # スクリーンショットを撮影
@@ -431,7 +436,7 @@ class WebUIDataGenerator:
         logger.info(f"異常UI: テストサンプルを {self.num_samples} 個生成しています...")
         for i in tqdm(range(self.num_samples)):
             # ランダムなUIインタラクションを実行
-            for _ in range(random.randint(1, 5)):
+            for _ in range(random.randint(3, 10)):
                 self.perform_random_interaction()
             
             # スクリーンショットを撮影
