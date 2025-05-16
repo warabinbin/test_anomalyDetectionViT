@@ -4,11 +4,12 @@
 ## 📁 ディレクトリ構成
 
 └── test_anomalyDetectionViT</br>
-    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── anomaly_detection_vit.py &nbsp;&nbsp;# ViTを用いた異常検知のメインスクリプト</br>
-    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── webui_data_generator.py &nbsp;&nbsp;# Web UI用のデータ生成スクリプト</br>
-    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── data/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# webui_data_generator.pyによって生成されたデータセット</br>
-    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── testapp/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# テスト用アプリケーション関連ファイル</br>
-    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── .gitignore</br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── anomaly_detection_vit.py &nbsp;&nbsp;</br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── data/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── test &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── train &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── webui_data_generator.py &nbsp;&nbsp;</br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── testapp/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</br>
 
 
 ## 🏃‍♂️ 実行方法
@@ -16,7 +17,7 @@
 
    ```bash
    python webui_data_generator.py
-2. 異常検知実行
-python anomaly_detection_vit.py --train ./data/train --test ./data/test --method ensemble
+2. **異常検知実行**
+
    ```bash
    python anomaly_detection_vit.py --train ./data/train --test ./data/test --method ensemble
