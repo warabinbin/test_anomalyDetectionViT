@@ -180,7 +180,4 @@ data/
 
 # ログファイルを無視
 webui_data_generator.log
-
-anomaly_detection_evaluation.png
-confusion_matrix.png
-roc_curve.png
+old

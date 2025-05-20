@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-webui_data_generator.py
+webui_data_collector.py
 
 このスクリプトはSeleniumを使用してWebGUIからスクリーンショットを取得し、
 データセットを構築します。正常HTMLからは正常データを、異常HTMLからは異常データを取得します。
@@ -16,7 +16,6 @@ import argparse
 from io import BytesIO
 from typing import Tuple, List
 
-import numpy as np
 from PIL import Image
 from tqdm import tqdm
 from selenium import webdriver
@@ -38,10 +37,10 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("webui_data_generator.log", encoding="utf-8")
+        logging.FileHandler("webui_data_collector.log", encoding="utf-8")
     ]
 )
-logger = logging.getLogger("WebUIDataGenerator")
+logger = logging.getLogger("WebUIDataCollector")
 
 # 定数
 DEFAULT_NORMAL_HTML = "testapp/simple-storage-manager.html"
@@ -434,80 +433,6 @@ class WebUIDataCollector:
             filename = f"abnormal_test_{i:04d}.png"
             output_path = os.path.join(self.test_abnormal_dir, filename)
             self.take_screenshot(output_path)
-    
-    def apply_data_augmentation(self):
-        """
-        訓練データに対してデータ拡張を適用
-        """
-        logger.info("訓練データの拡張を開始しています...")
-        
-        # 既存の訓練サンプルを取得
-        original_files = [f for f in os.listdir(self.train_normal_dir) if f.endswith('.png')]
-        
-        if not original_files:
-            logger.error("拡張する訓練データが見つかりません。")
-            return
-        
-        logger.info(f"{len(original_files)}枚の訓練データに対してデータ拡張を実行しています...")
-        
-        # 各画像に対してデータ拡張を実行
-        for filename in tqdm(original_files):
-            source_path = os.path.join(self.train_normal_dir, filename)
-            base_name = os.path.splitext(filename)[0]
-            
-            try:
-                # 画像を読み込み
-                image = Image.open(source_path)
-                
-                # 1. 回転（軽度な角度）
-                for angle in [-5, 5, -10, 10]:
-                    rotated = image.rotate(angle, resample=Image.BICUBIC, expand=False)
-                    aug_filename = f"{base_name}_rot{angle}.png"
-                    rotated.save(os.path.join(self.train_normal_dir, aug_filename))
-                
-                # 2. 明るさ調整
-                for factor in [0.8, 1.2]:
-                    # PILで明るさ調整の実装
-                    brightness_adj = Image.eval(image, lambda x: min(255, max(0, int(x * factor))))
-                    aug_filename = f"{base_name}_bright{int(factor*100)}.png"
-                    brightness_adj.save(os.path.join(self.train_normal_dir, aug_filename))
-                
-                # 3. コントラスト調整
-                for factor in [0.8, 1.2]:
-                    # PILでのコントラスト調整の簡易実装
-                    gray_avg = int(np.array(image).mean())
-                    contrast_adj = Image.eval(image, lambda x: min(255, max(0, gray_avg + (x - gray_avg) * factor)))
-                    aug_filename = f"{base_name}_contrast{int(factor*100)}.png"
-                    contrast_adj.save(os.path.join(self.train_normal_dir, aug_filename))
-                
-                # 4. ランダムクロップ
-                width, height = image.size
-                crop_size = (int(width * 0.9), int(height * 0.9))
-                for i in range(2):
-                    left = random.randint(0, width - crop_size[0])
-                    top = random.randint(0, height - crop_size[1])
-                    cropped = image.crop((left, top, left + crop_size[0], top + crop_size[1]))
-                    cropped = cropped.resize(self.img_size, Image.LANCZOS)
-                    aug_filename = f"{base_name}_crop{i}.png"
-                    cropped.save(os.path.join(self.train_normal_dir, aug_filename))
-                
-            except Exception as e:
-                logger.error(f"画像 {filename} の拡張中にエラーが発生しました: {str(e)}")
-        
-        augmented_count = len(os.listdir(self.train_normal_dir))
-        original_count = len(original_files)
-        logger.info(f"データ拡張が完了しました。元の画像: {original_count}枚、拡張後: {augmented_count}枚")
-    
-    def run(self):
-        """
-        データ収集とデータ拡張を実行
-        """
-        # データ収集
-        self.collect_data()
-        
-        # データ拡張
-        self.apply_data_augmentation()
-
 
 def list_html_files(directory):
     """指定されたディレクトリ内のHTMLファイルを一覧表示"""
@@ -523,7 +448,6 @@ def list_html_files(directory):
             print(f"{i}. {file}")
     else:
         print(f"\n指定されたディレクトリ({directory})内にHTMLファイルが見つかりませんでした。")
-
 
 def parse_arguments():
     """コマンドライン引数をパース"""
@@ -568,11 +492,6 @@ def parse_arguments():
         help=f"画像サイズ (幅 高さ) (デフォルト: {DEFAULT_IMG_SIZE[0]} {DEFAULT_IMG_SIZE[1]})"
     )
     parser.add_argument(
-        "--augment-only",
-        action="store_true",
-        help="データ収集をスキップし、既存データに対してデータ拡張のみを実行"
-    )
-    parser.add_argument(
         "--list-files",
         action="store_true",
         help="指定されたディレクトリ内のHTMLファイルを表示"
@@ -584,7 +503,6 @@ def parse_arguments():
         help="HTMLファイルを検索するディレクトリ (--list-filesオプションと共に使用)"
     )
     return parser.parse_args()
-
 
 def main():
     """メイン関数"""
@@ -607,23 +525,18 @@ def main():
             num_samples=args.samples
         )
         
-        # データ拡張のみモード
-        if args.augment_only:
-            collector.apply_data_augmentation()
-        else:
-            # データ収集と拡張を実行
-            collector.run()
+        # データ収集を実行
+        collector.collect_data()
             
     except FileNotFoundError as e:
         print(f"エラー: {e}")
         print("\nHTMLファイルパスを確認するために --list-files オプションを使用してください:")
-        print("  python webui_data_generator.py --list-files --dir ディレクトリパス")
+        print("  python webui_data_collector.py --list-files --dir ディレクトリパス")
     
     except Exception as e:
         print(f"エラー: {e}")
         import traceback
         print(traceback.format_exc())
-
 
 if __name__ == "__main__":
     main()
