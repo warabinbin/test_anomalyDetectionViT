@@ -4,27 +4,23 @@
 """
 webui_data_generator.py
 
-このスクリプトはSeleniumを使用してWebGUIの正常バージョンと異常バージョンからスクリーンショットを
-自動的に取得し、ViTモデルのための異常検知データセットを構築します。
+このスクリプトはSeleniumを使用してWebGUIからスクリーンショットを取得し、
+データセットを構築します。正常HTMLからは正常データを、異常HTMLからは異常データを取得します。
 """
 
 import os
 import time
 import random
-import shutil
 import logging
 import argparse
-from pathlib import Path
-from datetime import datetime
 from io import BytesIO
-from typing import Dict, List, Tuple, Union, Optional
+from typing import Tuple, List
 
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
@@ -32,8 +28,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
     TimeoutException, 
     NoSuchElementException, 
-    ElementNotInteractableException,
-    StaleElementReferenceException
+    ElementNotInteractableException
 )
 from webdriver_manager.chrome import ChromeDriverManager
 
@@ -51,11 +46,10 @@ logger = logging.getLogger("WebUIDataGenerator")
 # 定数
 DEFAULT_NORMAL_HTML = "testapp/simple-storage-manager.html"
 DEFAULT_ABNORMAL_HTML = "testapp/error-simple-storage-manager.html"
-DEFAULT_DATASET_DIR = "dataset"
-DEFAULT_TRAIN_RATIO = 0.7
+DEFAULT_DATASET_DIR = "data"
 DEFAULT_IMG_SIZE = (224, 224)  # ViTのデフォルトサイズ
 DEFAULT_NUM_SAMPLES = 500
-DEFAULT_VAL_RATIO = 0.1    # 検証データ用の比率を追加
+DEFAULT_TRAIN_RATIO = 0.7  # 訓練データの割合
 WAIT_TIMEOUT = 10
 INTERACTION_PAUSE = 0.5  # アクション間の待機時間
 UI_TEXT_EXAMPLES = [
@@ -83,12 +77,12 @@ SAMPLE_TEXTS = [
     "ランダムなメモテキストです。アプリケーションのテストに使用します。様々な操作を行います。"
 ]
 
-class WebUIDataGenerator:
+
+class WebUIDataCollector:
     """
-    WebGUIの異常検知データセット生成クラス
+    WebGUIからデータを収集するクラス
     
-    正常と異常なUI状態からスクリーンショットを取得し、
-    ViTモデルで使用するためのデータセットを生成します。
+    正常HTMLからは正常データを、異常HTMLからは異常データを取得します。
     """
     
     def __init__(
@@ -128,15 +122,14 @@ class WebUIDataGenerator:
         logger.info(f"異常HTMLファイル: {self.abnormal_html}")
         
         # データセットディレクトリ構造
-        self.train_dir = os.path.join(dataset_dir, "train")
-        self.val_dir = os.path.join(dataset_dir, "val")    # 検証用ディレクトリを追加
-        self.test_dir = os.path.join(dataset_dir, "test")
-        self.train_normal_dir = os.path.join(self.train_dir, "normal")
-        self.train_abnormal_dir = os.path.join(self.train_dir, "abnormal")  # 訓練用異常データ
-        self.val_normal_dir = os.path.join(self.val_dir, "normal")          # 検証用正常データ
-        self.val_abnormal_dir = os.path.join(self.val_dir, "abnormal")      # 検証用異常データ
-        self.test_normal_dir = os.path.join(self.test_dir, "normal")
-        self.test_abnormal_dir = os.path.join(self.test_dir, "abnormal")
+        self.train_normal_dir = os.path.join(dataset_dir, "train", "normal")
+        self.test_normal_dir = os.path.join(dataset_dir, "test", "normal")
+        self.test_abnormal_dir = os.path.join(dataset_dir, "test", "abnormal")
+        
+        # ディレクトリ作成
+        os.makedirs(self.train_normal_dir, exist_ok=True)
+        os.makedirs(self.test_normal_dir, exist_ok=True)
+        os.makedirs(self.test_abnormal_dir, exist_ok=True)
         
         # Webドライバー設定
         chrome_options = Options()
@@ -144,25 +137,11 @@ class WebUIDataGenerator:
         chrome_options.add_argument("--window-size=1366,768")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--lang=ja")  # 日本語設定を追加
+        chrome_options.add_argument("--lang=ja")  # 日本語設定
         self.driver = webdriver.Chrome(
             service=Service(ChromeDriverManager().install()),
             options=chrome_options
         )
-        
-    def setup_directories(self):
-        """データセットのディレクトリ構造をセットアップ"""
-        logger.info("データセットディレクトリを設定しています...")
-        os.makedirs(self.train_normal_dir, exist_ok=True)
-        os.makedirs(self.test_normal_dir, exist_ok=True)
-        os.makedirs(self.test_abnormal_dir, exist_ok=True)
-    
-    def clean_directories(self):
-        """データセットディレクトリをクリーンアップ"""
-        logger.info("データセットディレクトリをクリーンアップしています...")
-        if os.path.exists(self.dataset_dir):
-            shutil.rmtree(self.dataset_dir)
-        self.setup_directories()
     
     def load_page(self, html_path: str) -> bool:
         """
@@ -206,7 +185,7 @@ class WebUIDataGenerator:
             screenshot = self.driver.get_screenshot_as_png()
             image = Image.open(BytesIO(screenshot))
             
-            # ViTの入力サイズに合わせてリサイズ
+            # 指定サイズにリサイズ
             image = image.resize(self.img_size, Image.LANCZOS)
             
             # 保存先ディレクトリを確認
@@ -215,8 +194,10 @@ class WebUIDataGenerator:
             # 保存
             image.save(output_path)
             logger.debug(f"スクリーンショットを保存しました: {output_path}")
+            return image
         except Exception as e:
             logger.error(f"スクリーンショットの撮影中にエラーが発生しました: {str(e)}")
+            return None
     
     def perform_random_interaction(self) -> str:
         """
@@ -363,42 +344,52 @@ class WebUIDataGenerator:
     def scroll_page(self) -> str:
         """ページをスクロール"""
         try:
-            body = self.driver.find_element(By.TAG_NAME, "body")
             scroll_amount = random.randint(-300, 300)
             self.driver.execute_script(f"window.scrollBy(0, {scroll_amount})")
             return f"ページをスクロール: {scroll_amount}px"
         except Exception as e:
             return f"スクロール中にエラー: {str(e)}"
     
-    def generate_dataset(self):
-        """データセットを生成"""
-        # ディレクトリを準備
-        self.clean_directories()
-        
+    def collect_data(self):
+        """
+        データセットを生成
+        """
         try:
-            # 正常UIからのトレーニングデータとテストデータを生成
-            logger.info("正常UIからデータセットを生成しています...")
-            self._generate_normal_samples()
+            # 正常UIからのデータ収集
+            logger.info("正常UIからデータを収集しています...")
+            self._collect_normal_data()
             
-            # 異常UIからのテストデータを生成
-            logger.info("異常UIからデータセットを生成しています...")
-            self._generate_abnormal_samples()
+            # 異常UIからのデータ収集
+            logger.info("異常UIからデータを収集しています...")
+            self._collect_abnormal_data()
             
-            logger.info(f"データセット生成が完了しました: {self.dataset_dir}")
+            # 結果の要約を表示
+            train_normal_count = len(os.listdir(self.train_normal_dir))
+            test_normal_count = len(os.listdir(self.test_normal_dir))
+            test_abnormal_count = len(os.listdir(self.test_abnormal_dir))
+            
+            print("\nデータセット情報:")
+            print(f"  - 訓練データ (正常): {train_normal_count}枚")
+            print(f"  - テストデータ (正常): {test_normal_count}枚")
+            print(f"  - テストデータ (異常): {test_abnormal_count}枚")
+            print(f"  - データセット総数: {train_normal_count + test_normal_count + test_abnormal_count}枚")
+            print(f"  - 出力先: {os.path.abspath(self.dataset_dir)}")
+            
         except Exception as e:
-            logger.error(f"データセット生成中にエラーが発生しました: {str(e)}")
+            logger.error(f"データ収集中にエラーが発生しました: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
         finally:
             # ブラウザを閉じる
             self.driver.quit()
     
-    def _generate_normal_samples(self):
-        """正常UIからのサンプルを生成"""
+    def _collect_normal_data(self):
+        """正常UIからのサンプルを収集"""
         if not self.load_page(self.normal_html):
             logger.error("正常UIのロードに失敗しました。")
             return
         
+        # 訓練データと検証データに分割
         num_train = int(self.num_samples * self.train_ratio)
         num_test = self.num_samples - num_train
         
@@ -414,7 +405,7 @@ class WebUIDataGenerator:
             output_path = os.path.join(self.train_normal_dir, filename)
             self.take_screenshot(output_path)
         
-        # テストサンプルを生成
+        # テストサンプル（正常）を生成
         logger.info(f"正常UI: テストサンプルを {num_test} 個生成しています...")
         for i in tqdm(range(num_test)):
             # ランダムなUIインタラクションを実行
@@ -426,13 +417,13 @@ class WebUIDataGenerator:
             output_path = os.path.join(self.test_normal_dir, filename)
             self.take_screenshot(output_path)
     
-    def _generate_abnormal_samples(self):
-        """異常UIからのサンプルを生成"""
+    def _collect_abnormal_data(self):
+        """異常UIからのサンプルを収集"""
         if not self.load_page(self.abnormal_html):
             logger.error("異常UIのロードに失敗しました。")
             return
         
-        # テスト用の異常サンプルを生成
+        # 異常データはテスト用にのみ収集
         logger.info(f"異常UI: テストサンプルを {self.num_samples} 個生成しています...")
         for i in tqdm(range(self.num_samples)):
             # ランダムなUIインタラクションを実行
@@ -443,11 +434,101 @@ class WebUIDataGenerator:
             filename = f"abnormal_test_{i:04d}.png"
             output_path = os.path.join(self.test_abnormal_dir, filename)
             self.take_screenshot(output_path)
+    
+    def apply_data_augmentation(self):
+        """
+        訓練データに対してデータ拡張を適用
+        """
+        logger.info("訓練データの拡張を開始しています...")
+        
+        # 既存の訓練サンプルを取得
+        original_files = [f for f in os.listdir(self.train_normal_dir) if f.endswith('.png')]
+        
+        if not original_files:
+            logger.error("拡張する訓練データが見つかりません。")
+            return
+        
+        logger.info(f"{len(original_files)}枚の訓練データに対してデータ拡張を実行しています...")
+        
+        # 各画像に対してデータ拡張を実行
+        for filename in tqdm(original_files):
+            source_path = os.path.join(self.train_normal_dir, filename)
+            base_name = os.path.splitext(filename)[0]
+            
+            try:
+                # 画像を読み込み
+                image = Image.open(source_path)
+                
+                # 1. 回転（軽度な角度）
+                for angle in [-5, 5, -10, 10]:
+                    rotated = image.rotate(angle, resample=Image.BICUBIC, expand=False)
+                    aug_filename = f"{base_name}_rot{angle}.png"
+                    rotated.save(os.path.join(self.train_normal_dir, aug_filename))
+                
+                # 2. 明るさ調整
+                for factor in [0.8, 1.2]:
+                    # PILで明るさ調整の実装
+                    brightness_adj = Image.eval(image, lambda x: min(255, max(0, int(x * factor))))
+                    aug_filename = f"{base_name}_bright{int(factor*100)}.png"
+                    brightness_adj.save(os.path.join(self.train_normal_dir, aug_filename))
+                
+                # 3. コントラスト調整
+                for factor in [0.8, 1.2]:
+                    # PILでのコントラスト調整の簡易実装
+                    gray_avg = int(np.array(image).mean())
+                    contrast_adj = Image.eval(image, lambda x: min(255, max(0, gray_avg + (x - gray_avg) * factor)))
+                    aug_filename = f"{base_name}_contrast{int(factor*100)}.png"
+                    contrast_adj.save(os.path.join(self.train_normal_dir, aug_filename))
+                
+                # 4. ランダムクロップ
+                width, height = image.size
+                crop_size = (int(width * 0.9), int(height * 0.9))
+                for i in range(2):
+                    left = random.randint(0, width - crop_size[0])
+                    top = random.randint(0, height - crop_size[1])
+                    cropped = image.crop((left, top, left + crop_size[0], top + crop_size[1]))
+                    cropped = cropped.resize(self.img_size, Image.LANCZOS)
+                    aug_filename = f"{base_name}_crop{i}.png"
+                    cropped.save(os.path.join(self.train_normal_dir, aug_filename))
+                
+            except Exception as e:
+                logger.error(f"画像 {filename} の拡張中にエラーが発生しました: {str(e)}")
+        
+        augmented_count = len(os.listdir(self.train_normal_dir))
+        original_count = len(original_files)
+        logger.info(f"データ拡張が完了しました。元の画像: {original_count}枚、拡張後: {augmented_count}枚")
+    
+    def run(self):
+        """
+        データ収集とデータ拡張を実行
+        """
+        # データ収集
+        self.collect_data()
+        
+        # データ拡張
+        self.apply_data_augmentation()
+
+
+def list_html_files(directory):
+    """指定されたディレクトリ内のHTMLファイルを一覧表示"""
+    html_files = []
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            if file.endswith(".html"):
+                html_files.append(os.path.join(root, file))
+    
+    if html_files:
+        print(f"\n指定されたディレクトリ({directory})内のHTMLファイル:")
+        for i, file in enumerate(html_files, 1):
+            print(f"{i}. {file}")
+    else:
+        print(f"\n指定されたディレクトリ({directory})内にHTMLファイルが見つかりませんでした。")
+
 
 def parse_arguments():
     """コマンドライン引数をパース"""
     parser = argparse.ArgumentParser(
-        description="WebGUIの異常検知データセットを生成するツール"
+        description="WebGUIからデータを収集し、データセットを構築するツール"
     )
     parser.add_argument(
         "--normal", 
@@ -487,9 +568,9 @@ def parse_arguments():
         help=f"画像サイズ (幅 高さ) (デフォルト: {DEFAULT_IMG_SIZE[0]} {DEFAULT_IMG_SIZE[1]})"
     )
     parser.add_argument(
-        "--clean", 
+        "--augment-only",
         action="store_true",
-        help="既存のデータセットディレクトリをクリーンアップ"
+        help="データ収集をスキップし、既存データに対してデータ拡張のみを実行"
     )
     parser.add_argument(
         "--list-files",
@@ -504,20 +585,6 @@ def parse_arguments():
     )
     return parser.parse_args()
 
-def list_html_files(directory):
-    """指定されたディレクトリ内のHTMLファイルを一覧表示"""
-    html_files = []
-    for root, dirs, files in os.walk(directory):
-        for file in files:
-            if file.endswith(".html"):
-                html_files.append(os.path.join(root, file))
-    
-    if html_files:
-        print(f"\n指定されたディレクトリ({directory})内のHTMLファイル:")
-        for i, file in enumerate(html_files, 1):
-            print(f"{i}. {file}")
-    else:
-        print(f"\n指定されたディレクトリ({directory})内にHTMLファイルが見つかりませんでした。")
 
 def main():
     """メイン関数"""
@@ -530,8 +597,8 @@ def main():
         return
     
     try:
-        # データジェネレーターを初期化
-        generator = WebUIDataGenerator(
+        # データコレクターを初期化
+        collector = WebUIDataCollector(
             normal_html=args.normal,
             abnormal_html=args.abnormal,
             dataset_dir=args.output,
@@ -540,21 +607,13 @@ def main():
             num_samples=args.samples
         )
         
-        # データセットを生成
-        generator.generate_dataset()
-        
-        # データセット情報を表示
-        train_normal_count = len(os.listdir(generator.train_normal_dir))
-        test_normal_count = len(os.listdir(generator.test_normal_dir))
-        test_abnormal_count = len(os.listdir(generator.test_abnormal_dir))
-        
-        print("\nデータセット情報:")
-        print(f"  - 訓練データ (正常): {train_normal_count}枚")
-        print(f"  - テストデータ (正常): {test_normal_count}枚")
-        print(f"  - テストデータ (異常): {test_abnormal_count}枚")
-        print(f"  - データセット総数: {train_normal_count + test_normal_count + test_abnormal_count}枚")
-        print(f"  - 出力先: {os.path.abspath(args.output)}")
-    
+        # データ拡張のみモード
+        if args.augment_only:
+            collector.apply_data_augmentation()
+        else:
+            # データ収集と拡張を実行
+            collector.run()
+            
     except FileNotFoundError as e:
         print(f"エラー: {e}")
         print("\nHTMLファイルパスを確認するために --list-files オプションを使用してください:")
@@ -564,6 +623,7 @@ def main():
         print(f"エラー: {e}")
         import traceback
         print(traceback.format_exc())
+
 
 if __name__ == "__main__":
     main()
